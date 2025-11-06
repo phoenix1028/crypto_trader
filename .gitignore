@@ -55,7 +55,9 @@ crypto_trader/test/
 *.txt
 *.md
 !README.md
-!CLAUDE.md
+
+# Project specific files to ignore
+CLAUDE.md
 
 # Binance API (security)
 *.key
