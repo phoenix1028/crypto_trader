@@ -107,6 +107,27 @@ TESTNET_BINANCE_SECRET_KEY=your_secret
 - 期货交易具有杠杆风险，请严格管理仓位
 - 建议在充分测试后应用于实盘交易
 
+## 工具调用以及输出
+
+```json
+{
+  "final_decision": "BUY",
+  "reasoning": "BNBUSDT技术分析显示：1) 价格955.73突破EMA20(954.11)，短期趋势向上；2) MACD指标从负转正至0.759，动量转强；3) RSI(7周期)61.968处于中性偏强区域，未超买；4) 日内价格从951.61稳步上升至955.73；5) 资金费率为0，交易成本低。综合判断短期上涨概率较高。",
+  "confidence": 0.65,
+  "executed_trades": [
+    {
+      "symbol": "BNBUSDT",
+      "side": "BUY",
+      "quantity": 0.09,
+      "order_type": "MARKET",
+      "status": "SUCCESS",
+      "order_id": 875442304
+    }
+  ]
+}
+```
+币安交易
+![alt text](实际交易截图（测试环境）.png)
 ---
 
 ## 商业合作
