@@ -11,8 +11,7 @@ import json
 from datetime import datetime
 from typing import Dict, Any, List
 from .state import TradingState
-# from .tools import BinanceFuturesMCPTools  # 暂时注释，因为不需要
-# from prompts.trading_prompts import AlphaArenaPrompt, DeepSeekStrategy, ConfidenceAssessment  # 暂时注释
+# from utils.tools import set_leverage_tool, place_order_tool, query_order_tool, cancel_order_tool
 
 
 class TradingNodes:
@@ -22,22 +21,12 @@ class TradingNodes:
         """初始化节点"""
         self.tradeable_symbols = tradeable_symbols
         self.risk_manager = None
-        self.mcp_tools = None
 
     async def prepare_data(self, state: TradingState) -> TradingState:
         """
         节点1: 准备数据 - 获取所有必要的市场和账户数据
         """
         print("[prepare_data] 准备市场数据...")
-
-        # 初始化MCP工具（暂时跳过）
-        # if not self.mcp_tools:
-        #     try:
-        #         self.mcp_tools = BinanceFuturesMCPTools()
-        #         print("  [INFO] MCP工具初始化成功")
-        #     except ValueError as e:
-        #         print(f"  [WARNING] MCP工具初始化失败: {e}")
-        #         self.mcp_tools = None
 
         # 导入市场数据提供者
         from utils.market_data import EnhancedBinanceDataProvider
@@ -208,11 +197,8 @@ class TradingNodes:
                     # 使用ConfidenceAssessment增强决策质量
                     print(f"  [INFO] 置信度评估: {ai_confidence:.2f} - {ConfidenceAssessment.get_confidence_breakdown(ai_confidence)}")
 
-                    # 通过MCP工具执行交易决策
-                    if self.mcp_tools and trading_decisions:
-                        print(f"  [INFO] 通过MCP工具执行{len(trading_decisions)}个交易决策...")
-                        execution_results = await self._execute_trading_decisions(trading_decisions, state)
-                        print(f"  [OK] MCP交易执行完成: {execution_results.get('summary', 'N/A')}")
+                    # 交易决策已通过AI决策系统处理完成
+                    # 实际交易执行由TradingAgentV3自动处理
                 else:
                     print("  [WARNING] 未找到JSON决策格式")
             except Exception as e:
@@ -375,141 +361,3 @@ JSON格式示例:
         if not state["account_info"].get('positions'):
             return "当前无持仓"
         return "当前持仓信息详见账户部分"
-
-    async def _execute_trading_decisions(
-        self,
-        trading_decisions: Dict[str, Any],
-        state: TradingState
-    ) -> Dict[str, Any]:
-        """
-        通过MCP工具执行交易决策
-        """
-        if not self.mcp_tools:
-            return {
-                "success": False,
-                "summary": "MCP工具未初始化",
-                "executed_count": 0,
-                "errors": ["MCP工具未初始化"]
-            }
-
-        execution_summary = {
-            "success": True,
-            "summary": "",
-            "executed_count": 0,
-            "skipped_count": 0,
-            "errors": [],
-            "details": {}
-        }
-
-        try:
-            # 使用ConfidenceAssessment进行全局置信度评估
-            global_confidence = self._calculate_confidence_with_assessment(state)
-            confidence_threshold = 0.8  # Alpha Arena标准
-
-            for symbol, decision in trading_decisions.items():
-                signal = decision.get('signal', '').upper()
-                quantity = decision.get('quantity', 0)
-                ai_confidence = decision.get('confidence', 0)
-
-                # 跳过置信度低的决策 - 使用Alpha Arena标准
-                if ai_confidence < confidence_threshold:
-                    execution_summary['skipped_count'] += 1
-                    execution_summary['details'][symbol] = {
-                        "status": "skipped",
-                        "reason": f"AI置信度 {ai_confidence:.2f} < {confidence_threshold} (Alpha Arena标准)"
-                    }
-                    continue
-
-                # 全局市场置信度过低也跳过
-                if global_confidence < 0.6:
-                    execution_summary['skipped_count'] += 1
-                    execution_summary['details'][symbol] = {
-                        "status": "skipped",
-                        "reason": f"全局置信度 {global_confidence:.2f} < 0.6"
-                    }
-                    continue
-
-                # 处理不同信号
-                if signal == "HOLD":
-                    execution_summary['skipped_count'] += 1
-                    execution_summary['details'][symbol] = {
-                        "status": "skipped",
-                        "reason": "信号为HOLD，保持持仓"
-                    }
-
-                elif signal == "CLOSE":
-                    result = await self.mcp_tools.place_order(
-                        symbol=symbol,
-                        side="SELL",
-                        order_type="MARKET",
-                        quantity=abs(quantity),
-                        reduce_only=True,
-                        close_position=True
-                    )
-
-                    execution_summary['details'][symbol] = {
-                        "status": "executed" if result.get('success') else "failed",
-                        "action": "close_position",
-                        "result": result
-                    }
-
-                    if result.get('success'):
-                        execution_summary['executed_count'] += 1
-                    else:
-                        execution_summary['errors'].append(f"{symbol}: {result.get('message')}")
-
-                elif signal in ["BUY", "SELL"]:
-                    # 开仓操作
-                    leverage_result = await self.mcp_tools.set_leverage(
-                        symbol=symbol,
-                        leverage=3
-                    )
-
-                    if not leverage_result.get('success'):
-                        execution_summary['errors'].append(
-                            f"{symbol} 设置杠杆失败: {leverage_result.get('message')}"
-                        )
-                        continue
-
-                    order_result = await self.mcp_tools.place_order(
-                        symbol=symbol,
-                        side=signal,
-                        order_type="MARKET",
-                        quantity=quantity,
-                        reduce_only=False
-                    )
-
-                    execution_summary['details'][symbol] = {
-                        "status": "executed" if order_result.get('success') else "failed",
-                        "action": "open_position",
-                        "leverage_result": leverage_result,
-                        "order_result": order_result
-                    }
-
-                    if order_result.get('success'):
-                        execution_summary['executed_count'] += 1
-                    else:
-                        execution_summary['errors'].append(f"{symbol}: {order_result.get('message')}")
-
-            # 生成摘要
-            executed = execution_summary['executed_count']
-            skipped = execution_summary['skipped_count']
-            errors = len(execution_summary['errors'])
-
-            if executed > 0:
-                execution_summary['summary'] = f"成功执行 {executed} 个决策"
-                if skipped > 0:
-                    execution_summary['summary'] += f"，跳过 {skipped} 个"
-                if errors > 0:
-                    execution_summary['summary'] += f"，{errors} 个错误"
-            else:
-                execution_summary['summary'] = "未执行任何交易决策"
-                if errors > 0:
-                    execution_summary['summary'] += f"，{errors} 个错误"
-
-        except Exception as e:
-            execution_summary['success'] = False
-            execution_summary['summary'] = f"执行异常: {str(e)}"
-            execution_summary['errors'].append(str(e))
-
-        return execution_summary

@@ -143,9 +143,10 @@ class SmartTrigger:
 
             # 检查AI调用次数（防止过于频繁）
             ai_call_count = redis_manager.get_ai_call_count()
-            if ai_call_count > 120:  # 1小时内超过120次调用（2次/分钟 × 60分钟）
+            max_calls = Config.MAX_AI_CALLS_PER_HOUR
+            if ai_call_count > max_calls:  # 1小时内超过配置的最大调用次数
                 print(f"[SMART_TRIGGER] AI调用次数过多 ({ai_call_count})，暂停触发")
-                print(f"[SMART_TRIGGER] 当前频率: {ai_call_count}次/小时，最大允许: 120次/小时")
+                print(f"[SMART_TRIGGER] 当前频率: {ai_call_count}次/小时，最大允许: {max_calls}次/小时")
                 print(f"[SMART_TRIGGER] 等待1小时后Redis自动重置计数器...")
                 return False
 

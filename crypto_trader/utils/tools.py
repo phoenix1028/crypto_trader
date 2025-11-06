@@ -153,8 +153,8 @@ def get_client() -> BinanceFuturesClient:
     """获取全局客户端实例"""
     global _client
     if _client is None:
-        # 检查是否在测试模式
-        testnet = os.getenv("ENABLE_TESTNET", "false").lower() == "true"
+        # 检查是否在测试模式 - 优先使用FUTURES_TESTNET配置
+        testnet = os.getenv("FUTURES_TESTNET", os.getenv("ENABLE_TESTNET", "true")).lower() == "true"
         _client = BinanceFuturesClient(testnet=testnet)
     return _client
 

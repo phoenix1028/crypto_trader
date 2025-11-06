@@ -150,7 +150,8 @@ class EventDrivenTradingSystem:
             print(f"最小间隔: {Config.MIN_CALL_INTERVAL}秒")
             print(f"价格波动阈值: {Config.PRICE_VOLATILITY_THRESHOLD * 100}%")
             print(f"兜底间隔: {Config.FALLBACK_INTERVAL}秒")
-            print(f"置信度阈值: {Config.CONFIDENCE_THRESHOLD}")
+            print(f"每小时最大AI调用: {Config.MAX_AI_CALLS_PER_HOUR}次")
+            print(f"积极交易置信度系统: 高>{Config.HIGH_CONFIDENCE_THRESHOLD}(2.5%风险), 中>{Config.MEDIUM_CONFIDENCE_THRESHOLD}(1.75%风险), 低>{Config.LOW_CONFIDENCE_THRESHOLD}(1%风险), 极低<{Config.LOW_CONFIDENCE_THRESHOLD}(无持仓)")
             print("=" * 60)
 
             # 显示系统状态
@@ -421,25 +422,28 @@ class EventDrivenTradingSystem:
                 confidence = decision_data['confidence']
                 print(f"   {symbol}: {signal} (置信度: {confidence:.2f})")
 
-            # 处理高置信度决策
+            # 处理可执行决策（中和高置信度）
             if high_confidence_decisions:
-                print(f"\n[高置信度信号]:")
+                print(f"\n[可执行决策]:")
                 for decision in high_confidence_decisions:
                     symbol = decision['symbol']
                     signal = decision['signal']
                     confidence = decision['confidence']
-                    print(f"   {signal} {symbol} (置信度: {confidence:.2f})")
+                    level = "高" if confidence >= Config.HIGH_CONFIDENCE_THRESHOLD else "中"
+                    print(f"   {level}置信度 {signal} {symbol} (置信度: {confidence:.2f})")
 
                 # 执行交易信号（使用await而不是asyncio.run）
                 if self.agent_integration:
-                    execution_result = await self.agent_integration.execute_trading_signals(decision)
+                    execution_result = await self.agent_integration.execute_trading_signals(decisions)
 
                     if execution_result.get("success"):
-                        print(f"\n[交易执行] 执行成功")
+                        successful = execution_result.get("successful_executions", 0)
+                        total = execution_result.get("total_executions", 0)
+                        print(f"\n[交易执行] 完成 {successful}/{total} 笔交易")
                     else:
                         print(f"\n[交易执行] 执行失败: {execution_result.get('error')}")
             else:
-                print(f"\n[暂停] 无高置信度决策信号")
+                print(f"\n[暂停] 暂无可执行决策（中/高置信度）")
 
             # 显示AI思考过程
             if chain_of_thought:
@@ -450,11 +454,11 @@ class EventDrivenTradingSystem:
             print(f"[EVENT_SYSTEM] 处理Agent决策失败: {e}")
 
     def _execute_trading_signal(self, symbol: str, signal: str, confidence: float, decision: Dict[str, Any]) -> None:
-        """执行交易信号（待实现MCP工具）"""
+        """执行交易信号"""
         try:
             print(f"[EVENT_SYSTEM] 执行交易: {signal} {symbol}")
 
-            # 这里将调用MCP工具执行交易
+            # 这里将调用交易工具执行交易
             # 暂时跳过
 
             print(f"[EVENT_SYSTEM] 交易执行待实现")

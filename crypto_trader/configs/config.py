@@ -43,12 +43,18 @@ class Config:
     MARGIN_TYPE = "ISOLATED"  # 保证金模式：ISOLATED（逐仓）或 CROSS（全仓）
 
     # === 智能触发器配置 ===
-    MIN_CALL_INTERVAL = 30  # 最小调用间隔（秒）
+    MIN_CALL_INTERVAL = 30 # 最小调用间隔（秒）
     PRICE_VOLATILITY_THRESHOLD = 0.002  # 价格波动阈值（0.2%）
-    FALLBACK_INTERVAL = 300  # 兜底间隔（5分钟）
+    FALLBACK_INTERVAL = 180 # 兜底间隔（3分钟）
+    MAX_AI_CALLS_PER_HOUR = int(os.getenv("MAX_AI_CALLS_PER_HOUR", "1500"))  # 每小时最大AI调用次数（积极交易可适当提高）
 
     # === 交易策略配置 ===
-    CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.8"))
+    # 三层置信度系统 (Alpha Arena v2.0)
+    HIGH_CONFIDENCE_THRESHOLD = float(os.getenv("HIGH_CONFIDENCE_THRESHOLD", "0.7"))  # 高置信度：2.5%风险单位
+    MEDIUM_CONFIDENCE_THRESHOLD = float(os.getenv("MEDIUM_CONFIDENCE_THRESHOLD", "0.4"))  # 中置信度：1.75%风险单位
+    LOW_CONFIDENCE_THRESHOLD = float(os.getenv("LOW_CONFIDENCE_THRESHOLD", "0.3"))  # 低置信度：1%风险单位
+    VERY_LOW_CONFIDENCE_THRESHOLD = 0.3  # 极低置信度：无持仓
+
     MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "2"))
     LEVERAGE = int(os.getenv("LEVERAGE", "20"))
     STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "0.015"))
@@ -198,7 +204,8 @@ if __name__ == "__main__":
     print(f"最小调用间隔: {Config.MIN_CALL_INTERVAL}秒")
     print(f"价格波动阈值: {Config.PRICE_VOLATILITY_THRESHOLD * 100}%")
     print(f"兜底间隔: {Config.FALLBACK_INTERVAL}秒")
-    print(f"置信度阈值: {Config.CONFIDENCE_THRESHOLD}")
+    print(f"每小时最大AI调用: {Config.MAX_AI_CALLS_PER_HOUR}次")
+    print(f"积极交易置信度: 高>{Config.HIGH_CONFIDENCE_THRESHOLD} 中>{Config.MEDIUM_CONFIDENCE_THRESHOLD} 低>{Config.LOW_CONFIDENCE_THRESHOLD} 极低<{Config.LOW_CONFIDENCE_THRESHOLD}")
     print(f"最大持仓: {Config.MAX_POSITIONS}")
     print(f"杠杆倍数: {Config.LEVERAGE}x")
     print(f"测试网模式: {Config.BINANCE_TESTNET}")

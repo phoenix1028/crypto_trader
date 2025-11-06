@@ -17,10 +17,21 @@ class AlphaArenaFormatter:
 
     def __init__(self):
         self.supported_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"]
-        # 初始化币安客户端
-        self.api_key = os.getenv('BINANCE_API_KEY')
-        self.secret_key = os.getenv('BINANCE_SECRET_KEY')
-        self.client = Client(self.api_key, self.secret_key)
+
+        # 初始化币安客户端 - 双重架构
+        # 1. 测试环境客户端：用于交易相关操作
+        self.trade_client = Client(
+            os.getenv('TESTNET_BINANCE_API_KEY'),
+            os.getenv('TESTNET_BINANCE_SECRET_KEY'),
+            testnet=True
+        )
+
+        # 2. 正式环境客户端：用于市场数据获取（历史K线）
+        self.data_client = Client(
+            os.getenv('BINANCE_API_KEY'),
+            os.getenv('BINANCE_SECRET_KEY'),
+            testnet=False
+        )
 
     def format_market_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -62,18 +73,32 @@ class AlphaArenaFormatter:
         # 获取真实K线数据
         try:
             # 获取3分钟K线数据（用于日内序列）
-            klines_3m = self.client.get_klines(
+            # 使用测试环境：用于最新价格趋势
+            klines_3m = self.trade_client.get_klines(
                 symbol=symbol,
                 interval='3m',
-                limit=50
+                limit=100  # 测试网实际限制，获取100个点
             )
 
             # 获取4小时K线数据（用于长期背景）
-            klines_4h = self.client.get_klines(
-                symbol=symbol,
-                interval='4h',
-                limit=20
-            )
+            # 使用生产环境：获取充足历史数据（过去30天）
+            try:
+                # 生产环境：获取30天4小时数据（足够所有长期指标计算）
+                # 30天 * 6个4小时/天 = 180个4小时K线
+                klines_4h = self.data_client.get_historical_klines(
+                    symbol,
+                    Client.KLINE_INTERVAL_4HOUR,
+                    "30 days ago UTC"
+                )
+                print(f"[INFO] {symbol}: 使用生产环境获取{len(klines_4h)}个4小时K线")
+            except Exception as e:
+                # 降级到测试环境15分钟数据
+                print(f"[WARNING] {symbol}: 生产环境4小时数据获取失败，使用测试环境15分钟数据: {e}")
+                klines_4h = self.trade_client.get_klines(
+                    symbol=symbol,
+                    interval='15m',
+                    limit=100  # 测试网实际有64个点
+                )
 
             # 计算真实的指标序列
             price_series_3m = [float(k[4]) for k in klines_3m[-10:]]  # 中间价（收盘价）
@@ -82,43 +107,45 @@ class AlphaArenaFormatter:
             rsi7_series_3m = self._calculate_rsi_series([float(k[4]) for k in klines_3m], 7)[-10:]
             rsi14_series_3m = self._calculate_rsi_series([float(k[4]) for k in klines_3m], 14)[-10:]
 
-            # 计算4小时长期背景
-            price_4h = [float(k[4]) for k in klines_4h[-10:]]
+            # 计算4小时长期背景（使用全部数据，而不是最后10个点）
+            price_4h = [float(k[4]) for k in klines_4h]
             ema20_4h = self._calculate_ema_series(price_4h, 20)
             ema50_4h = self._calculate_ema_series(price_4h, 50)
-            macd_series_4h = self._calculate_macd_series(price_4h)[-10:]
-            rsi14_series_4h = self._calculate_rsi_series(price_4h, 14)[-10:]
+            macd_series_4h = self._calculate_macd_series(price_4h)[-10:]  # 只返回最后10个给提示词
+            rsi14_series_4h = self._calculate_rsi_series(price_4h, 14)[-10:]  # 只返回最后10个
 
-            # 计算ATR
-            highs_4h = [float(k[2]) for k in klines_4h[-20:]]
-            lows_4h = [float(k[3]) for k in klines_4h[-20:]]
-            closes_4h = [float(k[4]) for k in klines_4h[-20:]]
+            # 计算ATR（使用全部4小时数据）
+            highs_4h = [float(k[2]) for k in klines_4h]
+            lows_4h = [float(k[3]) for k in klines_4h]
+            closes_4h = [float(k[4]) for k in klines_4h]
             atr3_4h = self._calculate_atr(highs_4h, lows_4h, closes_4h, 3)
             atr14_4h = self._calculate_atr(highs_4h, lows_4h, closes_4h, 14)
 
-            # 计算成交量
-            volumes_4h = [float(k[5]) for k in klines_4h[-20:]]
+            # 计算成交量（使用全部4小时数据）
+            volumes_4h = [float(k[5]) for k in klines_4h]
             volume_current_4h = volumes_4h[-1] if volumes_4h else 0
             volume_average_4h = sum(volumes_4h) / len(volumes_4h) if volumes_4h else 0
 
             # 获取资金费率和未平仓合约
+            # 使用测试环境（交易相关数据）
             funding_rate = 0.0
             try:
-                mark_data = self.client.futures_mark_price(symbol=symbol)
+                mark_data = self.trade_client.futures_mark_price(symbol=symbol)
                 funding_rate = float(mark_data.get('lastFundingRate', 0))
             except:
                 pass
 
             open_interest_latest = 0.0
             try:
-                oi_data = self.client.futures_open_interest(symbol=symbol)
+                oi_data = self.trade_client.futures_open_interest(symbol=symbol)
                 open_interest_latest = float(oi_data.get('openInterest', 0))
             except:
                 pass
 
             open_interest_avg = open_interest_latest  # 暂时使用最新值
 
-            return {
+            # 构建返回数据
+            result = {
                 "current_price": current_price,
                 "funding_rate": funding_rate,
                 "open_interest_latest": open_interest_latest,
@@ -128,7 +155,18 @@ class AlphaArenaFormatter:
                 "macd_series": macd_series_3m,
                 "rsi7_series": rsi7_series_3m,
                 "rsi14_series": rsi14_series_3m,
-                "long_term_4h": {
+                # 添加当前指标值（从序列提取最后一个有效值）
+                "current_ema20": ema20_series_3m[-1] if ema20_series_3m and ema20_series_3m[-1] != 0 else current_price,
+                "current_macd": macd_series_3m[-1] if macd_series_3m else 0.0,
+                "current_rsi7": rsi7_series_3m[-1] if rsi7_series_3m else 50.0,
+                "indicators": safe_get(data, 'indicators', {})
+            }
+
+            # 只有当4小时数据充足时才包含长期背景
+            # 生产环境：30天数据通常有180个4小时K线（充足）
+            # 测试环境：仅5个K线（严重不足）
+            if len(klines_4h) >= 20:
+                result["long_term_4h"] = {
                     "ema_20_4h": ema20_4h[-1] if ema20_4h else 0,
                     "ema_50_4h": ema50_4h[-1] if ema50_4h else 0,
                     "atr_3_4h": atr3_4h if atr3_4h else 0,
@@ -137,9 +175,13 @@ class AlphaArenaFormatter:
                     "volume_average_4h": volume_average_4h,
                     "macd_series_4h": macd_series_4h,
                     "rsi14_series_4h": rsi14_series_4h
-                },
-                "indicators": safe_get(data, 'indicators', {})
-            }
+                }
+                data_source = "生产环境" if len(klines_4h) >= 50 else "测试环境"
+                print(f"[INFO] {data_source}包含长期背景数据: {len(klines_4h)}个4小时K线")
+            else:
+                print(f"[INFO] 跳过长期背景数据: 仅{len(klines_4h)}个4小时K线（需要>=20个）")
+
+            return result
 
         except Exception as e:
             print(f"[ERROR] 获取{symbol}真实K线数据失败: {e}")
@@ -156,7 +198,7 @@ class AlphaArenaFormatter:
         current_price = float(safe_get(data, 'current_price', 0))
         indicators = safe_get(data, 'indicators', {})
 
-        # 返回基本数据，不生成任何模拟序列
+        # 返回基本数据，不生成任何模拟序列或长期背景
         return {
             "current_price": current_price,
             "funding_rate": 0.0,
@@ -167,31 +209,36 @@ class AlphaArenaFormatter:
             "macd_series": [0.0] * 10,
             "rsi7_series": [50.0] * 10,
             "rsi14_series": [50.0] * 10,
-            "long_term_4h": {
-                "ema_20_4h": current_price,
-                "ema_50_4h": current_price,
-                "atr_3_4h": 0.0,
-                "atr_14_4h": 0.0,
-                "volume_current_4h": 0.0,
-                "volume_average_4h": 0.0,
-                "macd_series_4h": [0.0] * 10,
-                "rsi14_series_4h": [50.0] * 10
-            },
+            # 添加当前指标值
+            "current_ema20": current_price,
+            "current_macd": 0.0,
+            "current_rsi7": 50.0,
             "indicators": indicators
+            # 注意：不包含long_term_1h字段（避免误导AI）
         }
 
     def _calculate_ema_series(self, prices: List[float], period: int) -> List[float]:
-        """计算EMA序列"""
+        """计算EMA序列（需要足够的历史数据）"""
+        if len(prices) == 0:
+            return []
+
         if len(prices) < period:
-            return prices
+            # 数据不足时，返回空列表并记录警告，不使用填充数据
+            print(f"[WARNING] EMA计算需要至少{period}个数据点，但只有{len(prices)}个数据，建议增加历史数据获取量")
+            return [0.0] * len(prices)  # 返回0值数组，明确表示数据不足
 
         df = pd.DataFrame({'close': prices})
         ema = df['close'].ewm(span=period, adjust=False).mean()
         return ema.tolist()
 
     def _calculate_macd_series(self, prices: List[float]) -> List[float]:
-        """计算MACD序列"""
+        """计算MACD序列（需要足够的历史数据）"""
+        if len(prices) == 0:
+            return []
+
+        # MACD需要26个数据点
         if len(prices) < 26:
+            print(f"[WARNING] MACD计算需要至少26个数据点，但只有{len(prices)}个数据，建议增加历史数据获取量")
             return [0.0] * len(prices)
 
         df = pd.DataFrame({'close': prices})
@@ -201,34 +248,62 @@ class AlphaArenaFormatter:
         return macd_line.tolist()
 
     def _calculate_rsi_series(self, prices: List[float], period: int) -> List[float]:
-        """计算RSI序列"""
+        """计算RSI序列（需要足够的历史数据）"""
+        if len(prices) == 0:
+            return []
+
+        # RSI需要period+1个数据点
         if len(prices) < period + 1:
-            return [50.0] * len(prices)
+            print(f"[WARNING] RSI计算需要至少{period+1}个数据点，但只有{len(prices)}个数据，建议增加历史数据获取量")
+            return [50.0] * len(prices)  # 返回中性值
 
         df = pd.DataFrame({'close': prices})
         delta = df['close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
+
+        # 处理除零情况
+        rs = gain / (loss.replace(0, 1e-10))
         rsi = 100 - (100 / (1 + rs))
+
+        # 处理无效值
+        rsi = rsi.fillna(50.0).replace([float('inf'), float('-inf')], 50.0)
         return rsi.tolist()
 
     def _calculate_atr(self, highs: List[float], lows: List[float], closes: List[float], period: int) -> float:
-        """计算ATR"""
-        if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
+        """计算ATR（修复版本：数据不足时也计算合理ATR）"""
+        if len(highs) == 0 or len(lows) == 0 or len(closes) == 0:
             return 0.0
 
-        # 计算True Range
-        high_low = [h - l for h, l in zip(highs[1:], lows[1:])]
-        high_close = [abs(h - c) for h, c in zip(highs[1:], closes[:-1])]
-        low_close = [abs(l - c) for l, c in zip(lows[1:], closes[:-1])]
+        # 如果数据不足，扩展到period+1个点
+        if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
+            # 找到最大的列表长度
+            max_len = max(len(highs), len(lows), len(closes))
+            target_len = period + 1
+
+            # 用最后一个有效值填充缺失的数据
+            extended_highs = highs + [highs[-1] if highs else 0] * (target_len - len(highs))
+            extended_lows = lows + [lows[-1] if lows else 0] * (target_len - len(lows))
+            extended_closes = closes + [closes[-1] if closes else 0] * (target_len - len(closes))
+        else:
+            extended_highs = highs
+            extended_lows = lows
+            extended_closes = closes
+
+        # 计算True Range（使用扩展后的数据）
+        high_low = [h - l for h, l in zip(extended_highs[1:], extended_lows[1:])]
+        high_close = [abs(h - c) for h, c in zip(extended_highs[1:], extended_closes[:-1])]
+        low_close = [abs(l - c) for l, c in zip(extended_lows[1:], extended_closes[:-1])]
 
         tr = [max(hl, hc, lc) for hl, hc, lc in zip(high_low, high_close, low_close)]
 
-        # 计算ATR
+        # 计算ATR（确保有足够的数据）
         if len(tr) >= period:
             atr = sum(tr[:period]) / period
             return atr
+        elif len(tr) > 0:
+            # 即使数据不足，也返回可用的平均值
+            return sum(tr) / len(tr)
         return 0.0
 
     def format_account_info(self, account_data: Dict[str, Any]) -> Dict[str, Any]:

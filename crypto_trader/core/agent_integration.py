@@ -81,7 +81,7 @@ class AgentIntegration:
             # TradingAgentV3已经返回了正确的格式，直接使用
             decision_result = result
 
-            print(f"[AGENT_INTEGRATION] Agent决策完成，置信度阈值: {Config.CONFIDENCE_THRESHOLD}")
+            print(f"[AGENT_INTEGRATION] Agent决策完成，积极交易置信度系统: 高>{Config.HIGH_CONFIDENCE_THRESHOLD} 中>{Config.MEDIUM_CONFIDENCE_THRESHOLD} 低>{Config.LOW_CONFIDENCE_THRESHOLD} 极低<{Config.LOW_CONFIDENCE_THRESHOLD}")
 
             return decision_result
 
@@ -112,7 +112,7 @@ class AgentIntegration:
 
             # 处理每个交易对的决策
             processed_decisions = {}
-            high_confidence_decisions = []
+            executable_decisions = []
 
             for symbol, decision in trading_decisions.items():
                 signal = decision.get('signal', 'HOLD')
@@ -133,17 +133,31 @@ class AgentIntegration:
                     "confidence": confidence,
                     "quantity": quantity,
                     "reasoning": reasoning,
-                    "high_confidence": confidence >= Config.CONFIDENCE_THRESHOLD,
+                    "confidence_level": self._get_confidence_level(confidence),
+                    "risk_unit": self._get_risk_unit(confidence),
                     "timestamp": datetime.now().isoformat()
                 }
 
-                # 记录高置信度决策
-                if confidence >= Config.CONFIDENCE_THRESHOLD and signal != 'HOLD':
-                    high_confidence_decisions.append({
+                # 记录可执行的决策（中和高置信度，≥0.4）
+                if confidence >= Config.MEDIUM_CONFIDENCE_THRESHOLD and signal != 'HOLD':
+                    # 🔧 获取side字段（如果有）
+                    decision_side = decision.get('side', 'BUY')
+                    if signal == "ENTER":
+                        # ENTER信号使用decision中的side
+                        final_side = decision_side
+                    elif signal in ["BUY", "SELL"]:
+                        # 直接信号使用信号本身
+                        final_side = signal
+                    else:
+                        # 其他信号默认BUY
+                        final_side = "BUY"
+
+                    executable_decisions.append({
                         "symbol": symbol,
                         "signal": signal,
                         "confidence": confidence,
-                        "quantity": quantity
+                        "quantity": quantity,
+                        "side": final_side  # 🔧 确保包含side字段
                     })
 
             # 构建结果
@@ -152,14 +166,16 @@ class AgentIntegration:
                 "timestamp": datetime.now().isoformat(),
                 "trigger_symbol": trigger_symbol,
                 "decisions": processed_decisions,
-                "high_confidence_decisions": high_confidence_decisions,
+                "high_confidence_decisions": executable_decisions,  # 保持字段名以兼容现有代码
+                "executable_decisions": executable_decisions,  # 新字段名更清晰
                 "account_info": {
                     "account_value": account_info.get('account_value', 0.0),
                     "available_cash": account_info.get('available_cash', 0.0)
                 },
                 "chain_of_thought": chain_of_thought,
                 "total_decisions": len(processed_decisions),
-                "high_confidence_count": len(high_confidence_decisions)
+                "high_confidence_count": len(executable_decisions),
+                "executable_count": len(executable_decisions)
             }
 
             return result
@@ -173,10 +189,10 @@ class AgentIntegration:
 
     async def execute_trading_signals(self, decisions: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行交易信号
+        处理交易信号 - Agent已经自主执行了交易，这里只做记录和返回
 
         Args:
-            decisions: 决策结果
+            decisions: 决策结果（包含Agent执行的交易）
 
         Returns:
             Dict[str, Any]: 执行结果
@@ -188,51 +204,66 @@ class AgentIntegration:
                     "error": "无效的决策结果"
                 }
 
+            # ✅ Agent已经通过工具调用自主执行了交易
+            # 这里只需要记录和返回结果
+            agent_executed_trades = decisions.get("agent_executed_trades", [])
             high_confidence_decisions = decisions.get("high_confidence_decisions", [])
-            if not high_confidence_decisions:
-                return {
-                    "success": True,
-                    "message": "没有高置信度决策需要执行"
-                }
 
-            print(f"\n[AGENT_INTEGRATION] 执行 {len(high_confidence_decisions)} 个高置信度交易信号")
+            print(f"\n[AGENT_INTEGRATION] Agent已自主执行交易")
+            print(f"[AGENT_INTEGRATION] Agent执行交易数: {len(agent_executed_trades)}")
+            print(f"[AGENT_INTEGRATION] 高置信度决策数: {len(high_confidence_decisions)}")
 
-            # 这里将调用现有的MCP工具执行交易
-            # 目前先记录交易信号
+            # 如果Agent已经执行了交易，记录它们
             execution_results = []
-
-            for decision in high_confidence_decisions:
-                symbol = decision['symbol']
-                signal = decision['signal']
-                confidence = decision['confidence']
-                quantity = decision['quantity']
-
-                print(f"[AGENT_INTEGRATION] 准备执行: {signal} {symbol} (置信度: {confidence:.2f})")
-
-                # 模拟交易执行（实际项目中将调用MCP工具）
-                execution_result = {
-                    "symbol": symbol,
-                    "signal": signal,
-                    "confidence": confidence,
-                    "quantity": quantity,
-                    "status": "pending",  # pending, executed, failed
-                    "timestamp": datetime.now().isoformat()
-                }
-
-                execution_results.append(execution_result)
+            for trade in agent_executed_trades:
+                execution_results.append({
+                    "symbol": trade.get('symbol', 'N/A'),
+                    "signal": trade.get('signal', 'N/A'),
+                    "confidence": trade.get('confidence', 0.0),
+                    "quantity": trade.get('quantity', 0.0),
+                    "status": trade.get('status', 'executed'),
+                    "order_result": trade.get('order_result', ''),
+                    "timestamp": trade.get('timestamp', datetime.now().isoformat())
+                })
 
             return {
                 "success": True,
                 "execution_results": execution_results,
-                "total_executions": len(execution_results)
+                "total_executions": len(execution_results),
+                "successful_executions": len([r for r in execution_results if r["status"] == "executed"]),
+                "message": "Agent已通过工具调用自主执行交易"
             }
 
         except Exception as e:
-            print(f"[AGENT_INTEGRATION] 执行交易信号失败: {e}")
+            print(f"[AGENT_INTEGRATION] 处理交易信号失败: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 "success": False,
                 "error": str(e)
             }
+
+    def _get_confidence_level(self, confidence: float) -> str:
+        """获取置信度级别"""
+        if confidence >= Config.HIGH_CONFIDENCE_THRESHOLD:
+            return "HIGH"
+        elif confidence >= Config.MEDIUM_CONFIDENCE_THRESHOLD:
+            return "MEDIUM"
+        elif confidence >= Config.LOW_CONFIDENCE_THRESHOLD:
+            return "LOW"
+        else:
+            return "VERY_LOW"
+
+    def _get_risk_unit(self, confidence: float) -> float:
+        """获取风险单位"""
+        if confidence >= Config.HIGH_CONFIDENCE_THRESHOLD:
+            return 0.025  # 高置信度：2.5%风险单位
+        elif confidence >= Config.MEDIUM_CONFIDENCE_THRESHOLD:
+            return 0.0175  # 中置信度：1.75%风险单位
+        elif confidence >= Config.LOW_CONFIDENCE_THRESHOLD:
+            return 0.01  # 低置信度：1%风险单位
+        else:
+            return 0.0  # 极低置信度：无持仓
 
     def get_agent_status(self) -> Dict[str, Any]:
         """获取Agent状态"""
@@ -240,7 +271,9 @@ class AgentIntegration:
             "initialized": self.initialized,
             "agent_available": self.agent is not None,
             "tradeable_symbols": self.tradeable_symbols,
-            "confidence_threshold": Config.CONFIDENCE_THRESHOLD
+            "confidence_system": "three_level",
+            "high_threshold": Config.HIGH_CONFIDENCE_THRESHOLD,
+            "medium_threshold": Config.MEDIUM_CONFIDENCE_THRESHOLD
         }
 
 
